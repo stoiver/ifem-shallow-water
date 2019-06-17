@@ -1,327 +1,244 @@
-function planardam_adaptive
-    % Planar Dam Break
-    %--------------------------------------------------------------------------
-    % Sudi Mungkasi 2012, Australian National University
-    %--------------------------------------------------------------------------
+function planar_dam
+%% Shallow water Planar Dam Break
+%--------------------------------------------------------------------------
+% Sudi Mungkasi 2012, Australian National University
+% Steve Roberts 2019, Australian National University
+%--------------------------------------------------------------------------
 
-    close all; clear all;
-    %---------------------- Parameters ----------------------------------------
-    figure(1); set(gcf,'Units','normal'); set(gcf,'Position',[0,0,0.8,0.4]);
-    t = 0; 
-    g = 9.81;
-    %---------------------- Initial Grid --------------------------------------
-    node = [-1 -1; 1 -1; 1 1; -1 1];
-    elem = [2 3 1; 4 1 3];
-    %bdFlag = setboundary(node,elem,'Dirichlet','all');
+%%
+close all; clear all;
 
-    for i = 1:1 % Try different level here. 7 is good.
-        [node,elem] = uniformbisect(node,elem);
+%---------------------- Parameters ----------------------------------------
+figure(1); set(gcf,'Units','normal'); set(gcf,'Position',[0,0,0.8,0.4]);
+
+t = 0;
+g = 9.81;
+%---------------------- Initial Grid --------------------------------------
+node = [-1 -1; 1 -1; 1 1; -1 1];
+elem = [2 3 1; 4 1 3];
+%bdFlag = setboundary(node,elem,'Dirichlet','all');
+
+for i = 1:1 % Try different level here. 7 is good.
+    [node,elem] = uniformbisect(node,elem);
+end
+
+x = [node(elem(:,1),1), node(elem(:,2),1), node(elem(:,3),1)];
+y = [node(elem(:,1),2), node(elem(:,2),2), node(elem(:,3),2)];
+
+
+%-------------------------- Initial Condition -----------------------------
+nt = size(elem,1);
+C  = find_centroid(node,elem);
+h  = zeros(1,nt);
+u  = zeros(1,nt);
+v  = zeros(1,nt);
+for i=1:nt
+    if C(i,1) < 0.0
+        h(i) = 0.5;
+        u(i) = 0.0;
+        v(i) = 0.0;
+    else
+        h(i) = 0.2;
+        u(i) = 0.0;
+        v(i) = 0.0;
     end
-    x = [node(elem(:,1),1), node(elem(:,2),1), node(elem(:,3),1)];
-    y = [node(elem(:,1),2), node(elem(:,2),2), node(elem(:,3),2)];
-    %r = x.^2+y.^2 - 1.0/16.0;
-    nt = size(elem,1);    
-    C = find_centroid(node,elem);
-    h  = zeros(1,nt);    
-    for i=1:nt
-        if C(i,1) < 0.0
-            h(i) = 0.5;
-        else
-            h(i) = 0.2;
+end
+
+Q = zeros(4,nt); %storage initiation for quantity
+Q(1,:) = h;      %height
+Q(2,:) = u.*h;   %xMomentum
+Q(3,:) = v.*h;   %yMomentum
+Q(4,:) = 0.5*h.*(u.^2+v.^2) + 0.5*g*h.^2; %entropy
+
+Area      = find_area(node,elem);
+tol_Area  = max(Area);
+
+fprintf('The initial number of elements is %d triangles.\n', nt);
+fprintf('The initial time is %d seconds.\n', t);
+
+
+% Plot the initial conditions
+showmesh(node,elem);
+axis on;
+findelem(node,elem);  % plot indices of all triangles
+findnode(node);       % plot indices of all vertices
+
+
+%% MAIN PROGRAM STARTS HERE %%%%%%%%%%%
+
+maxRefineCoarsen = 2;
+dt = 0.002;
+
+for iterate=1:maxRefineCoarsen
+    nt = size(elem,1); %number of triangles
+    
+    % Test evolve; Used to decide on new mesh
+    [U, Area] = evolve_step(node,elem,Q,dt,g);
+
+    % Begin Refinement ----------------------------------------------------
+    h  = U(1,:);
+    uh = U(2,:);
+    u  = uh./h;
+    vh = U(3,:);
+    v  = vh./h;    
+    Ent_after = 0.5*h.*(u.^2+v.^2) + 0.5*g*h.^2; %entropy
+    
+    NEP =(1/dt)*(Ent_after-U(4,:));%.*Area';
+
+    tol_NEP = 0.25*max(abs(NEP));
+    refineElem  = find(abs(NEP) > tol_NEP);%0.000001*tol_NEP);
+    
+    Elems_to_be_refined = refineElem
+    
+    for j = 1: size(refineElem,2)
+        if Area(refineElem(1,j))/tol_Area < 0.000001+1/(2^maxRefineCoarsen) %0.126 %1.1 %0.6 %0.26
+            Elems_to_be_refined = setdiff(Elems_to_be_refined, refineElem(1,j));
         end
     end
-
-    uh = zeros(1,nt);
-    u  = zeros(1,nt);
-    vh = zeros(1,nt);
-    v  = zeros(1,nt);
-    str = sprintf('The initial number of elements is %d triangles.', nt);
-    disp(str);
-    str2 = sprintf('The initial time is %d seconds.', t);
-    disp(str2);     
-
     
-     % Plot the initial conditions
-     %subplot(1,2,1); 
-     showmesh(node,elem);
-     axis on;
-     findelem(node,elem);  % plot indices of all triangles
-     findnode(node);       % plot indices of all vertices
-%      for i=1:size(elem,1)
-%          c = h(i)/max(h);
-%          tcolor(1,i,1:3) = [c c c];
-%      end
-%      subplot(1,2,2); 
-%      patch(x',y',[h;h;h],tcolor); %pause(0.001)%; view(3) %colorbar;
-
-
-
-    %%%%%%% MAIN PROGRAM STARTS HERE %%%%%%%%%%%
-    Q = zeros(4,nt); %storage initiation for quantity
-    Q(1,:) = h;  %height
-    Q(2,:) = uh; %xMomentum
-    Q(3,:) = vh; %yMomentum  
+    % Do the bisection of the domain
+    [node,elem, bdFlag, HB, tree] = bisect(node,elem, Elems_to_be_refined);
     
-    v      = vh./h;
-    Q(4,:) = 0.5*h.*(u.^2+v.^2) + 0.5*g*h.^2; %entropy
-    
-    Area      = find_area(node,elem);  %areas of triangles
-    Edgelength= find_edgelength(node,elem); %edgelength   
-    tol_Area  = max(Area);
-    tol_El    = min(min(Edgelength));
-    maxRefineCoarsen = 2; 
-    % dt = tol_El/2^(maxRefineCoarsen+3);
-    %(tol_El/4)/(2^(maxRefineCoarsen+1));
-    dt = 0.002;
-    maxIt = 100;
-    
-    tic;
-    
-    for i = 1:maxIt  
-        i
-        for iterate=1:maxRefineCoarsen
-            nt = size(elem,1); %number of triangles   
-
-            % Extract all quantities
-            h  = Q(1,:);
-            uh = Q(2,:);
-            u  = uh./h;
-            vh = Q(3,:);
-            v  = vh./h;
-            Q(4,:) = 0.5*h.*(u.^2+v.^2) + 0.5*g*h.^2;
-
-            % Extract domain properties
-            T = auxstructure(elem);
-            Neighbor = T.neighbor;             %find_neighbor(elem); %neighbor
-            Normal   = find_normal(node,elem); %normals
-            Edgelength= find_edgelength(node,elem); %edgelength
-            Area      = find_area(node,elem);  %areas of triangles
-            U = Q;                             %initiation for temporary storage of the quantity
-            
-            % Evolve
-            for j = 1:nt
-                Ul = Q(:,j);
-                flux = 0.0;
-                for k = 1:3
-                    neighbor = Neighbor(j,k);
-                    normal   = Normal(:,k,j);
-                    edgelength = Edgelength(1,k,j);
-
-                    Ul_rot = rotate(Ul, normal(1), normal(2));
-                    Ur = Q(:,neighbor);
-                    % Use reflective boundary at the moving water
-                    if neighbor==j
-                        if Ur(3) ~= 0.0
-                            Ur(3) = -Ur(3);
-                        end
-                    end                  
-                    Ur_rot = rotate(Ur, normal(1), normal(2));
-
-                    edgeflux  = FluxKNP(Ul_rot,Ur_rot,g);
-                    edgeflux  = rotate(edgeflux, normal(1), -normal(2));
-                    flux      = flux - edgeflux*edgelength;
-               end
-               U(:,j) = Ul + dt*flux/Area(j);       
-            end            
-            
-            %REFINEMENT   
-            h  = U(1,:);
-            uh = U(2,:);
-            u  = uh./h;
-            vh = U(3,:);
-            v  = vh./h;
-            Area      = find_area(node,elem);  %areas of triangles            
-            Ent_after = 0.5*h.*(u.^2+v.^2) + 0.5*g*h.^2; %entropy
-            NEP =(1/dt)*(Ent_after-U(4,:));%.*Area';
-            %maxNEP = max(abs(NEP));
-            %NEP = NEP/maxNEP;
-            %note = sprintf('The maximum value of scaled NEP is %d .', maxNEP);
-            %disp(note);
-            tol_NEP = 0.25*max(abs(NEP));
-            refineElem  = find(abs(NEP) > tol_NEP);%0.000001*tol_NEP);            
-            Elem_tobe_refined = refineElem;
-            Area      = find_area(node,elem);  %areas of triangles
-
-            for j = 1: size(refineElem,2)
-                if Area(refineElem(1,j))/tol_Area < 0.000001+1/(2^maxRefineCoarsen) %0.126 %1.1 %0.6 %0.26
-                    Elem_tobe_refined = setdiff(Elem_tobe_refined, refineElem(1,j));
-                end
-            end 
-            % Do the bisection of the domain without updating quantities
-            [node,elem, bdFlag, HB, brother] = bisect(node,elem, Elem_tobe_refined); 
-            
-            %Update quantites after bisection
-            if isempty(brother) == 0  %0 means that brother is not empty 
-                parents = parents_post_refinement(nt,node,elem,brother);
-                ntr = size(elem,1);  %number of triangles after refinement
-                QR = zeros(4,ntr); %storage initiation for quantities on refined grids
-                NEPR = zeros(1,ntr); %storage initiation for NEP on refined grids
-                for ii=1:ntr
-                    QR(:,ii)   = Q(:,parents(1,ii)); %!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                    NEPR(1,ii) = NEP(1,parents(1,ii));
-                end
-            else
-                QR = Q; %!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                NEPR = NEP;
-            end            
-                                   
-            
-            %BEGIN COARSENING..............................................
-            Area      = find_area(node,elem);  %areas of triangles    
-            coarsenElem = find(abs(NEPR) < tol_NEP);
-            Elem_tobe_coarsened = coarsenElem;
-            for j = 1: size(coarsenElem,2)
-               Area_j = Area(coarsenElem(1,j));
-               if Area_j/tol_Area >(2^maxRefineCoarsen)- 0.000001%2.1%1.1 %0.9
-                   Elem_tobe_coarsened = setdiff(Elem_tobe_coarsened, Area_j);
-               end
-            end       
-            markedElem = Elem_tobe_coarsened;
-            % Do coarsening and update quatities at the same time
-            bdEdge = []; % This empty set bdEdge will return nothing.
-            [node,elem,bdEdge,brother,QC,NEPC] = coarsen_sudi(node,elem, markedElem, bdEdge, QR, NEPR); 
-            
-            %Collect quantities for next iteration from the refine grids
-            Q = QC;
-            NEP = NEPC;
-            %........END COARSENING............
+    % Update quantities after bisection
+  
+    if isempty(tree) == 0   % 0 means that brother is not empty
+        
+        nb = size(tree,1);     %number of original triangles refined
+        ntr = size(elem,1);    %number of triangles after refinement
+        QR = zeros(4,ntr);     %storage initiation for quantities on refined grid
+        QR(:,1:nt) = Q;        %Copy over old quantity values
+        NEPR = zeros(1,ntr);   %storage initiation for NEP on refined grids
+        NEPR(1,1:nt) = NEP;    %Copy over old NEP values
+        
+        for ii=1:nb
+            t1 = tree(ii,1);
+            t2 = tree(ii,2);
+            t3 = tree(ii,3);
+            QR(:,t2) = Q(:,t1);
+            QR(:,t3) = Q(:,t1);
+            NEPR(1,t2) = NEP(:,t1);
+            NEPR(1,t3) = NEP(:,t1);
         end
-        
-        %POST ADAPTATION
-        nt = size(elem,1);
-        h  = Q(1,:);
-        uh = Q(2,:);
-        u  = uh./h;
-        vh = Q(3,:);
-        v  = vh./h;        
-        Q(4,:) = 0.5*h.*(u.^2+v.^2) + 0.5*g*h.^2; %entropy     
-        
-        % Extract domain properties
-        T = auxstructure(elem);
-        Neighbor = T.neighbor;             %find_neighbor(elem); %neighbor
-        Normal   = find_normal(node,elem); %normals
-        Edgelength= find_edgelength(node,elem); %edgelength
-        Area      = find_area(node,elem);  %areas of triangles
-        U = Q;                             %initiation for temporary storage of the quantity
-        % Evolve
-        for j = 1:nt
-            Ul = Q(:,j);
-            flux = 0.0;
-            for k = 1:3
-                neighbor = Neighbor(j,k);
-                normal   = Normal(:,k,j);
-                edgelength = Edgelength(1,k,j);
-
-                Ul_rot = rotate(Ul, normal(1), normal(2));
-                Ur = Q(:,neighbor);
-                % Use reflective boundary at the moving water
-                if neighbor==j
-                    if Ur(3) ~= 0.0
-                        Ur(3) = -Ur(3);
-                    end
-                end              
-                Ur_rot = rotate(Ur, normal(1), normal(2));
-
-                edgeflux  = FluxKNP(Ul_rot,Ur_rot,g);
-                edgeflux  = rotate(edgeflux, normal(1), -normal(2));
-                flux      = flux - edgeflux*edgelength;
-           end
-           U(:,j) = Ul + dt*flux/Area(j);       
-        end        
-        Q = U;
-        t = t+dt;
-        %Plot in colour the results
-        %clf(figure);
-        clf;
-        figure(1);
-        h  = Q(1,:);
-        uh = Q(2,:);
-        u  = uh./h;
-        vh = Q(3,:);
-        v  = vh./h;     
-        Ent_after = 0.5*h.*(u.^2+v.^2) + 0.5*g*h.^2; %entropy
-        NEP =(1/dt)*(Ent_after-U(4,:));%.*Area';
-        %maxNEP = max(abs(NEP));
-        %NEP = NEP/maxNEP;
-        
-        clf(figure(1));
-        figure(1);
-        subplot(1,2,1);
-        showsolution(node,elem,h); view(3); zlim([0. 1.]);
-        xlabel('x'); ylabel('y'); %zlabel('Stage')
-        subplot(1,2,2);
-        showsolution(node,elem,-NEP/max(abs(NEP))); view(3); 
-        xlabel('x'); ylabel('y'); pause(0.001);% zlabel('CK/max(|CK|)');  
-        
-        clf(figure(2));
-        figure(2);
-        subplot(1,2,1);
-        showsolution(node,elem,uh/max(abs(uh))); view(3); zlim([0. 1.]);
-        xlabel('x'); ylabel('y'); %zlabel('uh/max(|uh|)')        
-        subplot(1,2,2); 
-        showmesh(node,elem); view(3); xlabel('x'); ylabel('y'); pause(0.001);          
+    else
+        QR = Q;
+        NEPR = NEP;
     end
-%     %Plot the results
-%     %clf(figure);
-%     strg1 = sprintf('The final number of elements is %d triangles.', nt);
-%     disp(strg1);    
-%     strg2 = sprintf('The final time is %d seconds.', t);
-%     disp(strg2);     
-%     
-%     x = [node(elem(:,1),1), node(elem(:,2),1), node(elem(:,3),1)];
-%     y = [node(elem(:,1),2), node(elem(:,2),2), node(elem(:,3),2)];
-%     h  = Q(1,:);
-%     uh = Q(2,:);
-%     u  = uh./h;
-%     vh = Q(3,:);
-%     v  = vh./h;
-%     Ent_after = 0.5*h.*(u.^2+v.^2) + 0.5*g*h.^2; %entropy
-%     NEP =(1/dt)*(Ent_after-U(4,:)).*Area';
-%     maxNEP = max(abs(NEP));
-%     NEP = NEP/maxNEP;
-%     for i=1:size(elem,1)
-%         c = h(i)/max(h);
-%         tcolor(1,i,1:3) = [c c c];
-%     end
-%     subplot(1,2,1);% showmesh(node,elem);
-%     patch(x',y',[h;h;h],tcolor); view(3); zlim([0. 5.]);
-%     subplot(1,2,2); 
-%     patch(x',y',[NEP;NEP;NEP],tcolor); pause(0.001); view(3)%colorbar;    
-% 	saveas(gcf,'classic_dam_adaptive.fig')
-    str = sprintf('The final number of elements is %d triangles.', nt);
-    disp(str);
-    str2 = sprintf('The final time is %d seconds.', t);
-    disp(str2);  
-    toc;
-end
-%-------------------- End of CIRCULAR DAM --------------------------------
-
-
-%-------------------- Sub functions ---------------
-function parents_of_tr = parents_post_refinement(nt,node,elem,brother)
-ntr = size(elem,1);
-nbr = size(brother,1);
-parents = zeros(1,ntr);
-brotherL = brother(:,1)';
-brotherR = brother(:,2)';
-for i=1:nbr
-    k = nbr+1 - i;
-    parents(brotherR(k)) = brotherL(k);
-    pos = find(brotherR == brotherL(k));
-    if isempty(pos) == 0 % if pos is not empty
-       parents(brotherR(pos)) = brotherL(pos);
-       parents(brotherR(k))   = brotherL(pos);
+    % End Refinement ------------------------------------------------------
+    
+    
+    % Begin Coarsening ----------------------------------------------------
+    Area = find_area(node,elem);  %areas of triangles
+    coarsenElem = find(abs(NEPR) < tol_NEP);
+    Elems_to_be_coarsened = coarsenElem;
+    for j = 1: size(coarsenElem,2)
+        Area_j = Area(coarsenElem(1,j));
+        if Area_j/tol_Area >(2^maxRefineCoarsen)- 0.000001 %2.1%1.1 %0.9
+            Elems_to_be_coarsened = setdiff(Elems_to_be_coarsened, Area_j);
+        end
     end
+    
+    markedElem = Elems_to_be_coarsened;
+    % Do coarsening and update quatities at the same time
+    bdEdge = []; % This empty set bdEdge will return nothing.
+    
+    [node,elem,bdEdge,brother,QC,NEPC] = coarsen_sudi(node,elem, markedElem, bdEdge, QR, NEPR);
+    
+    %Collect quantities for next iteration from the refine grids
+    Q = QC;
+    NEP = NEPC;
+    % End Coarsening ------------------------------------------------------
+    
+    
+    % Actual Evolve -------------------------------------------------------
+    
+    [Q, Area] = evolve_step(node,elem,Q,dt);
+    t = t+dt;
+    
+    
+    
+    %Plot in colour the results
+    %clf(figure);
+    clf;
+    figure(1);
+    h  = Q(1,:);
+    uh = Q(2,:);
+    u  = uh./h;
+    vh = Q(3,:);
+    v  = vh./h;
+    Ent_after = 0.5*h.*(u.^2+v.^2) + 0.5*g*h.^2; %entropy
+    NEP =(1/dt)*(Ent_after-U(4,:));%.*Area';
+    %maxNEP = max(abs(NEP));
+    %NEP = NEP/maxNEP;
+    
+    clf(figure(1));
+    figure(1);
+    subplot(1,2,1);
+    showsolution(node,elem,h); view(3); zlim([0. 1.]);
+    xlabel('x'); ylabel('y'); %zlabel('Stage')
+    subplot(1,2,2);
+    showsolution(node,elem,-NEP/max(abs(NEP))); view(3);
+    xlabel('x'); ylabel('y'); pause(0.001);% zlabel('CK/max(|CK|)');
+    
+    clf(figure(2));
+    figure(2);
+    subplot(1,2,1);
+    showsolution(node,elem,uh/max(abs(uh))); view(3); zlim([0. 1.]);
+    xlabel('x'); ylabel('y'); %zlabel('uh/max(|uh|)')
+    subplot(1,2,2);
+    showmesh(node,elem); view(3); xlabel('x'); ylabel('y'); pause(0.001);
 end
-for i=1:ntr
-    if ismember(i,brotherR) == 0 % if i is not a member of Collect
-        parents(i) = i;
+end 
+
+%% Sub Functions
+
+function [U, Area] = evolve_step(node,elem,Q,dt,g)
+
+% Extract all quantities
+nt = size(elem,1);
+h  = Q(1,:);
+uh = Q(2,:);
+u  = uh./h;
+vh = Q(3,:);
+v  = vh./h;
+Q(4,:) = 0.5*h.*(u.^2+v.^2) + 0.5*g*h.^2;
+
+% Extract domain properties
+T = auxstructure(elem);
+Neighbor = T.neighbor;             %find_neighbor(elem); %neighbor
+Normal   = find_normal(node,elem); %normals
+Edgelength= find_edgelength(node,elem); %edgelength
+Area      = find_area(node,elem);  %areas of triangles
+U = Q;                             %initiation for temporary storage of the quantity
+
+% Evolve
+for j = 1:nt
+    Ul = Q(:,j);
+    flux = 0.0;
+    for k = 1:3
+        neighbor = Neighbor(j,k);
+        normal   = Normal(:,k,j);
+        edgelength = Edgelength(1,k,j);
+        
+        Ul_rot = rotate(Ul, normal(1), normal(2));
+        Ur = Q(:,neighbor);
+        % Use reflective boundary at the moving water
+        if neighbor==j
+            if Ur(3) ~= 0.0
+                Ur(3) = -Ur(3);
+            end
+        end
+        Ur_rot = rotate(Ur, normal(1), normal(2));
+        
+        edgeflux  = FluxKNP(Ul_rot,Ur_rot,g);
+        edgeflux  = rotate(edgeflux, normal(1), -normal(2));
+        flux      = flux - edgeflux*edgelength;
     end
+    U(:,j) = Ul + dt*flux/Area(j);
 end
+end %% -------------------- End of Evolve Step ----------------------------
 
-parents_of_tr = parents;
-end
 
+%%
 function F = FluxKNP(Ul,Ur,g)
 %dt=1000.0 must return F and dt
 F=zeros(4,1);
@@ -369,7 +286,7 @@ F(4,1) = entropy_edgeflux;
 %return F, dt
 end
 
-
+%%
 function Q = rotate(q, n1, n2)
 % Rotate the momentum component q, that is, q(2) and q(3)
 % from x,y coordinates to coordinates based on normal vector (n1, n2).
@@ -403,6 +320,7 @@ y3 = node(elem(:,3),2);
 A = 0.5* ( x1.*y2 + x2.*y3 + x3.*y1 - x1.*y3 - x2.*y1 - x3.*y2 );
 end
 
+%%
 function n = find_normal(node,elem)
 
 M = [ 0 1 ; -1 0 ];
@@ -425,6 +343,7 @@ n(:,3,i) = n(:,3,i)/el(1,3,i) ;
 end
 end
 
+%%
 function el = find_edgelength(node,elem)
 
 M = [ 0 1 ; -1 0 ];
@@ -447,22 +366,8 @@ n(:,3,i) = n(:,3,i)/el(1,3,i) ;
 end
 end
 
-function neighbor = find_neighbor(elem)
-totalEdge = uint32(sort([elem(:,[2,3]); elem(:,[3,1]); elem(:,[1,2])],2));
-[edge, i2, j] = unique(totalEdge,'rows');
-NT = size(elem,1);
-elem2edge = uint32(reshape(j,NT,3));
-i1(j(3*NT:-1:1)) = 3*NT:-1:1; 
-i1 = i1';
-k1 = ceil(i1/NT); 
-k2 = ceil(i2/NT); 
-t1 = i1 - NT*(k1-1);
-t2 = i2 - NT*(k2-1);
-ix = (i1 ~= i2); 
-neighbor = uint32(accumarray([[t1(ix),k1(ix)];[t2,k2]],[t2(ix);t1],[NT 3]));
-end
 
-
+%%
 function [node,elem,bdEdge,brother,UC,NEPC] = coarsen_sudi(node,elem, markedElem, bdEdge, UR, NEPR)
 %---------------------------------------------------------sudi
 node_store = node;
