@@ -1,4 +1,4 @@
-%load ../../ifem/mesh/meshdata/Lshapeadaptivemesh;
+load ../../ifem/mesh/meshdata/Lshapeadaptivemesh;
 set(gcf,'Units','normal'); set(gcf,'Position',[0.25,0.25,0.7,0.4]);
 
 subplot(1,3,1); showmesh(node,elem);
