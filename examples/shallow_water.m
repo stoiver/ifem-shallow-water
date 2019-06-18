@@ -1,4 +1,3 @@
-function planar_dam
 %% Shallow water Planar Dam Break
 %--------------------------------------------------------------------------
 % Sudi Mungkasi 2012, Australian National University
@@ -18,7 +17,7 @@ node = [-1 -1; 1 -1; 1 1; -1 1];
 elem = [2 3 1; 4 1 3];
 %bdFlag = setboundary(node,elem,'Dirichlet','all');
 
-for i = 1:5 % Try different level here. 7 is good.
+for i = 1:3 % Try different level here. 7 is good.
     [node,elem] = uniformbisect(node,elem);
 end
 
@@ -58,16 +57,16 @@ fprintf('The initial time is %d seconds.\n', t);
 
 
 % Plot the initial conditions
+figure(3)
 showmesh(node,elem);
 axis on;
 findelem(node,elem);  % plot indices of all triangles
 findnode(node);       % plot indices of all vertices
 
-
 %% MAIN PROGRAM STARTS HERE %%%%%%%%%%%
 
 maxRefineCoarsen = 2;
-maxIt = 100;
+maxIt = 2;
 dt = 0.002;
 
 for i = 1:maxIt
@@ -77,6 +76,8 @@ for i = 1:maxIt
         % Test evolve; Used to decide on new mesh
         [U, Area] = evolve_step(node,elem,Q,dt,g);
         
+        disp('Q U')
+        size(Q)
         size(U)
         size(Area)
         
@@ -95,16 +96,16 @@ for i = 1:maxIt
         
         Elems_to_be_refined = refineElem;
         
-        size(refineElem)
         for j = 1: size(refineElem,1)
             if Area(refineElem(j))/tol_Area < 0.000001+1/(2^maxRefineCoarsen) %0.126 %1.1 %0.6 %0.26
                 Elems_to_be_refined = setdiff(Elems_to_be_refined, refineElem(j));
             end
         end
+        size(Elems_to_be_refined)
         
         % Do the bisection of the domain
         [node,elem,~,~,tree] = bisect(node,elem, Elems_to_be_refined);
-        ntn = size(elem,1);  %number of triangles after refinement
+        ntn = size(elem,1)  %number of triangles after refinement
         QR = zeros(ntn,4);
         for ii = 1:4
             QR(:,ii) = eleminterpolate(Q(:,ii),tree);
@@ -189,7 +190,9 @@ for i = 1:maxIt
         subplot(1,2,2);
         showmesh(node,elem); view(3); xlabel('x'); ylabel('y'); pause(0.001);
 end
-end
+
+
+
 
 %% Sub Functions
 
@@ -308,12 +311,15 @@ Q(2) =  n1*q2 + n2*q3;
 Q(3) = -n2*q2 + n1*q3;
 end
 
+%%
 function C = find_centroid(node,elem)
 x = (node(elem(:,1),1) + node(elem(:,2),1) + node(elem(:,3),1))/3;
 y = (node(elem(:,1),2) + node(elem(:,2),2) + node(elem(:,3),2))/3;
 C = [x,y]; %space initiation
 end
 
+
+%%
 function A = find_area(node,elem)
 x1 = node(elem(:,1),1);
 x2 = node(elem(:,2),1);
