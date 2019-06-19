@@ -96,8 +96,18 @@ while (t < 0.1)
     nt = size(elem,1); %number of triangles
     %fprintf('nt = %g \n',nt);
     
-    for iter = 1:0
+    for iter = 1:2
         % Test evolve; Used to decide on new mesh
+        
+        h  = Q(:,1);
+        uh = Q(:,2);
+        u  = uh./h;
+        vh = Q(:,3);
+        v  = vh./h;
+        entropy_before = 0.5*h.*(u.^2+v.^2) + 0.5*g*h.^2;
+        
+        Q(:,4) = entropy_before;
+        
         [U, Area, dt] = evolve_step(node,elem,Q,dt,g);
         
         
@@ -107,11 +117,12 @@ while (t < 0.1)
         u  = uh./h;
         vh = U(:,3);
         v  = vh./h;
-        Ent_after = 0.5*h.*(u.^2+v.^2) + 0.5*g*h.^2; %entropy
-        NEP = abs((1/dt)*(Ent_after-U(:,4)));%.*Area';
+        entropy = U(:,4);
+        entropy_after = 0.5*h.*(u.^2+v.^2) + 0.5*g*h.^2; %entropy
+        NEP = abs((1/dt)*(entropy_after-entropy));%.*Area';
         
         tol_NEP = 0.25*max(abs(NEP));
-        refineElem  = find((abs(NEP) > tol_NEP) .* (Area > init_res/16) );
+        refineElem  = find((abs(NEP) > tol_NEP) .* (Area > init_res/64) );
         
         %     elems_to_be_refined = refineElem;
         %
@@ -206,14 +217,16 @@ while (t < 0.1)
     u  = uh./h;
     vh = Q(:,3);
     v  = vh./h;
-    Ent_after = 0.5*h.*(u.^2+v.^2) + 0.5*g*h.^2; %entropy
-    NEP =(1/dt)*(Ent_after-Q(:,4));%.*Area';
+    entropy = Q(:,4);
+    entropy_after = 0.5*h.*(u.^2+v.^2) + 0.5*g*h.^2; %entropy
+    
+    NEP =(1/dt)*(entropy_after-entropy);
     maxNEP = max(abs(NEP));
     NEP = NEP/maxNEP;
     
     fprintf('max h  = %g, min h  = %g \n',max(h),min(h));
     fprintf('max uh = %g, min uh = %g \n',max(uh),min(uh));
-    
+    fprintf('max ent = %g, min ent = %g \n',max(entropy),min(entropy));
 end
 
 
@@ -225,12 +238,12 @@ showsolution(node,elem,h); view(3); zlim([0. 1.]);
 xlabel('x'); ylabel('y'); zlabel('Stage');
 
 subplot(1,2,2);
-showsolution(node,elem,-NEP/max(abs(NEP))); view(3);
-xlabel('x'); ylabel('y'); zlabel('NEP/max(|NEP|)');
+showsolution(node,elem,abs(NEP)); view(3);
+xlabel('x'); ylabel('y'); zlabel('|NEP|');
 
 clf(figure(4));
 figure(4);
-set(gcf,'Units','normal'); set(gcf,'Position',[0.8,0.8,0.15,0.15]);
+set(gcf,'Units','normal'); set(gcf,'Position',[0.8,0.75,0.15,0.15]);
 subplot(1,2,1);
 showsolution(node,elem,uh/max(abs(uh))); view(3); zlim([0. 1.]);
 xlabel('x'); ylabel('y'); zlabel('uh/max(|uh|)')
@@ -251,18 +264,18 @@ CFL = 0.5;
 
 % Extract all quantities
 nt = size(elem,1);
-h  = Q(:,1);
-uh = Q(:,2);
-u  = uh./h;
-vh = Q(:,3);
-v  = vh./h;
-Q(:,4) = 0.5*h.*(u.^2+v.^2) + 0.5*g*h.^2;
+% h  = Q(:,1);
+% uh = Q(:,2);
+% u  = uh./h;
+% vh = Q(:,3);
+% v  = vh./h;
+% entropy = Q(:,4);
+%Q(:,4) = 0.5*h.*(u.^2+v.^2) + 0.5*g*h.^2;
 
 % Extract domain properties
 T = auxstructure(elem);
 Neighbor = T.neighbor;             %find_neighbor(elem); %neighbor
-Normal   = find_normal(node,elem); %normals
-Edgelength= find_edgelength(node,elem); %edgelength
+[Normal, Edgelength] = find_normals_edgelengths(node,elem); %normals
 Area      = find_area(node,elem);  %areas of triangles
 U = Q; 
 
@@ -286,8 +299,6 @@ for j = 1:nt
         % Use reflective boundary at the moving water
         if neighbor==j
             Ur_rot(2) = -Ur_rot(2);      
-%             if Ur(3) ~= 0.0   
-%             end
         end
        
         
@@ -332,6 +343,7 @@ s_min = min([u_l-soundspeed_l, u_r-soundspeed_r, 0.0]);
 flux_l_h       = h_l*u_l;
 flux_l_p       = h_l*u_l^2 + 0.5*g*h_l^2;
 flux_l_voltrac = u_l*h_l*ct_l;
+
 flux_r_h       = h_r*u_r;
 flux_r_p       = h_r*u_r^2 + 0.5*g*h_r^2;
 flux_r_voltrac = u_r*h_r*ct_r;
@@ -344,7 +356,7 @@ denom = s_max-s_min;
 edgeflux_h = (s_max*flux_l_h - s_min*flux_r_h + s_max*s_min*(h_r-h_l))/ denom;
 edgeflux_p = (s_max*flux_l_p - s_min*flux_r_p + s_max*s_min*(flux_r_h-flux_l_h))/ denom;
 edgeflux_voltrac = (s_max*flux_l_voltrac - s_min*flux_r_voltrac + s_max*s_min*(h_r*ct_r-h_l*ct_l))/ denom;
-entropy_edgeflux = (s_max*entropy_flux_l - s_min*entropy_flux_r + s_max*s_min*(e_r-e_l))/denom;
+edgeflux_entropy = (s_max*entropy_flux_l - s_min*entropy_flux_r + s_max*s_min*(e_r-e_l))/denom;
 max_speed = max(abs(s_max), abs(s_min));
         
 % Update timestep
@@ -353,7 +365,7 @@ max_speed = max(abs(s_max), abs(s_min));
 F(1) = edgeflux_h;
 F(2) = edgeflux_p;
 F(3) = edgeflux_voltrac;
-F(4) = entropy_edgeflux;
+F(4) = edgeflux_entropy;
 
 
 %return F, dt
@@ -397,7 +409,7 @@ A = 0.5* ( x1.*y2 + x2.*y3 + x3.*y1 - x1.*y3 - x2.*y1 - x3.*y2 );
 end
 
 %%
-function n = find_normal(node,elem)
+function [n,el] = find_normals_edgelengths(node,elem)
 
 M = [ 0 1 ; -1 0 ];
 nt = size(elem,1);
@@ -405,40 +417,19 @@ nt = size(elem,1);
 n = zeros(2,3,nt);
 el = zeros(1,3,nt);
 for i = 1:nt
-n(:,1,i) = M*(node(elem(i,3),:) - node(elem(i,2),:))';
-n(:,2,i) = M*(node(elem(i,1),:) - node(elem(i,3),:))';
-n(:,3,i) = M*(node(elem(i,2),:) - node(elem(i,1),:))';
-
-el(1,1,i) = sqrt(n(1,1,i)^2 + n(2,1,i)^2);
-el(1,2,i) = sqrt(n(1,2,i)^2 + n(2,2,i)^2);
-el(1,3,i) = sqrt(n(1,3,i)^2 + n(2,3,i)^2);
-
-n(:,1,i) = n(:,1,i)/el(1,1,i) ;
-n(:,2,i) = n(:,2,i)/el(1,2,i) ;
-n(:,3,i) = n(:,3,i)/el(1,3,i) ;    
+    n(:,1,i) = M*(node(elem(i,3),:) - node(elem(i,2),:))';
+    n(:,2,i) = M*(node(elem(i,1),:) - node(elem(i,3),:))';
+    n(:,3,i) = M*(node(elem(i,2),:) - node(elem(i,1),:))';
+    
+    el(1,1,i) = sqrt(n(1,1,i)^2 + n(2,1,i)^2);
+    el(1,2,i) = sqrt(n(1,2,i)^2 + n(2,2,i)^2);
+    el(1,3,i) = sqrt(n(1,3,i)^2 + n(2,3,i)^2);
+    
+    n(:,1,i) = n(:,1,i)/el(1,1,i) ;
+    n(:,2,i) = n(:,2,i)/el(1,2,i) ;
+    n(:,3,i) = n(:,3,i)/el(1,3,i) ;
 end
 end
 
-%%
-function el = find_edgelength(node,elem)
 
-M = [ 0 1 ; -1 0 ];
-nt = size(elem,1);
-
-n = zeros(2,3,nt);
-el = zeros(1,3,nt);
-for i = 1:nt
-n(:,1,i) = M*(node(elem(i,3),:) - node(elem(i,2),:))';
-n(:,2,i) = M*(node(elem(i,1),:) - node(elem(i,3),:))';
-n(:,3,i) = M*(node(elem(i,2),:) - node(elem(i,1),:))';
-
-el(1,1,i) = sqrt(n(1,1,i)^2 + n(2,1,i)^2);
-el(1,2,i) = sqrt(n(1,2,i)^2 + n(2,2,i)^2);
-el(1,3,i) = sqrt(n(1,3,i)^2 + n(2,3,i)^2);
-
-n(:,1,i) = n(:,1,i)/el(1,1,i) ;
-n(:,2,i) = n(:,2,i)/el(1,2,i) ;
-n(:,3,i) = n(:,3,i)/el(1,3,i) ;    
-end
-end
 
