@@ -96,7 +96,7 @@ while (t < 0.1)
     nt = size(elem,1); %number of triangles
     %fprintf('nt = %g \n',nt);
     
-    for iter = 1:2
+    for iter = 1:1
         % Test evolve; Used to decide on new mesh
         
         h  = Q(:,1);
@@ -117,12 +117,12 @@ while (t < 0.1)
         u  = uh./h;
         vh = U(:,3);
         v  = vh./h;
-        entropy = U(:,4);
-        entropy_after = 0.5*h.*(u.^2+v.^2) + 0.5*g*h.^2; %entropy
-        NEP = abs((1/dt)*(entropy_after-entropy));%.*Area';
+        entropy_evolved = U(:,4);
+        entropy_formula = 0.5*h.*(u.^2+v.^2) + 0.5*g*h.^2; %entropy
+        NEP = abs((1/dt)*(entropy_formula-entropy_evolved));%.*Area';
         
-        tol_NEP = 0.25*max(abs(NEP));
-        refineElem  = find((abs(NEP) > tol_NEP) .* (Area > init_res/64) );
+        tol_NEP = 0.1*max(abs(NEP));
+        refineElem  = find((abs(NEP) > tol_NEP) .* (Area >= init_res/64) );
         
         %     elems_to_be_refined = refineElem;
         %
@@ -159,7 +159,7 @@ while (t < 0.1)
         % Begin Coarsening ----------------------------------------------------
         Area = find_area(node,elem);  %areas of triangles
         tol_Area  = max(Area);
-        coarsenElem = find(abs(NEPR) < tol_NEP);
+        coarsenElem = find(abs(NEPR) < 0.5*tol_NEP);
         
         
         %fprintf('|coarsenElem| = %g \n',size(coarsenElem,1));
@@ -218,9 +218,9 @@ while (t < 0.1)
     vh = Q(:,3);
     v  = vh./h;
     entropy = Q(:,4);
-    entropy_after = 0.5*h.*(u.^2+v.^2) + 0.5*g*h.^2; %entropy
+    entropy_formula = 0.5*h.*(u.^2+v.^2) + 0.5*g*h.^2; %entropy
     
-    NEP =(1/dt)*(entropy_after-entropy);
+    NEP =(1/dt)*(entropy_formula-entropy);
     maxNEP = max(abs(NEP));
     NEP = NEP/maxNEP;
     
